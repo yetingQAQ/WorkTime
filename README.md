@@ -13,12 +13,9 @@
 - ✅ 在屏幕最顶部显示渐变色进度条
 - ✅ 根据上班时间和下班时间自动计算工作进度
 - ✅ 到达下班时间时自动提示关机
-- ✅ 可自定义上班和下班时间
 - ✅ 可自定义进度条渐变色
 - ✅ 支持最小化到系统托盘
-- ✅ 右键菜单快速访问功能
 - ✅ 可随时取消或启用自动关机
-- ✅ 每天自动重置关机状态
 
 ## 快速开始
 
@@ -31,7 +28,7 @@
 uv sync
 
 # 运行程序
-uv run python work_time_progress.py
+uv run python src/work_time_progress.py
 ```
 
 ### 打包成可执行文件
@@ -71,7 +68,7 @@ pip install -r requirements.txt
 
 ```bash
 # 开发环境
-uv run python work_time_progress.py
+uv run python src/work_time_progress.py
 
 # 或直接运行打包后的exe
 .\dist\工作时间进度.exe

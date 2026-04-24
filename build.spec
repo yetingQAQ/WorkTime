@@ -3,7 +3,7 @@
 block_cipher = None
 
 a = Analysis(
-    ['work_time_progress.py'],
+    ['src/work_time_progress.py'],
     pathex=[],
     binaries=[],
     datas=[('icon.ico', '.')],
