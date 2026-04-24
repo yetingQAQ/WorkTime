@@ -35,7 +35,8 @@ class WorkTimeProgress:
         else:
             # 开发环境
             self.app_dir = os.path.dirname(os.path.abspath(__file__))
-            self.resource_dir = self.app_dir
+            # 资源文件在项目根目录（上一级目录）
+            self.resource_dir = os.path.dirname(self.app_dir)
 
         self.config_file = os.path.join(self.app_dir, "config.json")
         self.load_config()
@@ -173,14 +174,19 @@ class WorkTimeProgress:
             color_start = self.config.get('progress_color_start', '#0078D4')
             color_end = self.config.get('progress_color_end', '#00D4AA')
 
+            # 根据当前进度计算目标颜色（从起始颜色到当前进度对应的颜色）
+            current_progress_factor = self.progress_value / 100
+            current_end_color = self.interpolate_color(color_start, color_end, current_progress_factor)
+
             # 绘制渐变色
             # 将进度条分成多个小段，每段颜色略有不同
             segments = min(progress_width, 100)  # 最多100个渐变段
             segment_width = progress_width / segments
 
             for i in range(segments):
+                # 在进度条范围内从起始颜色渐变到当前进度对应的颜色
                 factor = i / max(segments - 1, 1)
-                color = self.interpolate_color(color_start, color_end, factor)
+                color = self.interpolate_color(color_start, current_end_color, factor)
                 x1 = i * segment_width
                 x2 = (i + 1) * segment_width
                 self.canvas.create_rectangle(
