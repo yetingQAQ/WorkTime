@@ -34,17 +34,14 @@ def main():
 
     # 同步依赖
     print("\n[2/5] 同步项目依赖...")
-    if not run_command("uv sync", "同步依赖"):
+    if not run_command("uv sync --extra build", "同步依赖"):
         print("\n打包失败: 无法同步依赖")
         input("\n按回车键退出...")
         return
 
-    # 安装PyInstaller
-    print("\n[3/5] 安装PyInstaller...")
-    if not run_command("uv pip install pyinstaller", "安装PyInstaller"):
-        print("\n打包失败: 无法安装PyInstaller")
-        input("\n按回车键退出...")
-        return
+    # 打包不再需要单独安装PyInstaller，已包含在build依赖中
+    print("\n[3/5] 准备打包环境...")
+    print("PyInstaller和Pillow已通过uv sync安装")
 
     # 清理旧文件
     print("\n[4/5] 清理旧的构建文件...")

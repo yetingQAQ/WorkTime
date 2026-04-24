@@ -1,571 +1,311 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-工作时间进度条程序
-在屏幕顶部显示工作进度，到下班时间自动关机
-"""
-
-import tkinter as tk
-from tkinter import ttk, messagebox, colorchooser
 import json
 import os
-from datetime import datetime, time
-import threading
 import sys
+import ctypes
+from datetime import datetime
 
-# Windows系统托盘支持
-try:
-    import pystray
-    from PIL import Image, ImageDraw
-    TRAY_AVAILABLE = True
-except ImportError:
-    TRAY_AVAILABLE = False
-    print("警告: 未安装pystray和Pillow库，系统托盘功能将不可用")
-    print("请运行: pip install pystray Pillow")
+from PyQt6.QtWidgets import (QApplication, QWidget, QSystemTrayIcon, QMenu,
+                              QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                              QComboBox, QPushButton, QMessageBox, QColorDialog)
+from PyQt6.QtCore import Qt, QTimer, QRect
+from PyQt6.QtGui import QPainter, QLinearGradient, QColor, QIcon, QPixmap
+
+
+class ProgressBar(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.progress_value = 0
+        self.shimmer_offset = 0
+        self.color_start = QColor("#0078D4")
+        self.color_end = QColor("#00D4AA")
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowTransparentForInput
+        )
+
+        screen = QApplication.primaryScreen().geometry()
+        self.setGeometry(0, 0, screen.width(), 2)
+        self.setFixedHeight(2)
+        self.setStyleSheet("background-color: #fff;")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            hwnd = int(self.winId())
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 33, ctypes.byref(ctypes.c_int(1)), ctypes.sizeof(ctypes.c_int)
+            )
+        except:
+            pass
+
+    def set_progress(self, value):
+        self.progress_value = value
+        self.update()
+
+    def set_colors(self, start, end):
+        self.color_start = QColor(start)
+        self.color_end = QColor(end)
+        self.update()
+
+    def update_shimmer(self, offset):
+        self.shimmer_offset = offset
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        width, height = self.width(), self.height()
+        progress_width = int(width * self.progress_value / 100)
+
+        if progress_width > 0:
+            factor = self.progress_value / 100
+            end_color = QColor(
+                int(self.color_start.red() + (self.color_end.red() - self.color_start.red()) * factor),
+                int(self.color_start.green() + (self.color_end.green() - self.color_start.green()) * factor),
+                int(self.color_start.blue() + (self.color_end.blue() - self.color_start.blue()) * factor)
+            )
+
+            gradient = QLinearGradient(0, 0, progress_width, 0)
+            gradient.setColorAt(0, self.color_start)
+            gradient.setColorAt(1, end_color)
+
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.fillRect(0, 0, progress_width, height, gradient)
+
+            # 流光效果
+            shimmer_width = max(progress_width * 0.2, 100)
+            shimmer_center = self.shimmer_offset % (progress_width + shimmer_width) - shimmer_width / 2
+
+            shimmer_gradient = QLinearGradient(
+                shimmer_center - shimmer_width / 2, 0,
+                shimmer_center + shimmer_width / 2, 0
+            )
+            shimmer_gradient.setColorAt(0, QColor(255, 255, 255, 0))
+            shimmer_gradient.setColorAt(0.5, QColor(255, 255, 255, 180))
+            shimmer_gradient.setColorAt(1, QColor(255, 255, 255, 0))
+
+            shimmer_rect = QRect(
+                int(max(0, shimmer_center - shimmer_width / 2)), 0,
+                int(min(shimmer_width, progress_width - max(0, shimmer_center - shimmer_width / 2))), height
+            )
+
+            if shimmer_rect.width() > 0:
+                painter.fillRect(shimmer_rect, shimmer_gradient)
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.setWindowTitle("时间设置")
+        self.setModal(True)
+
+        layout = QVBoxLayout()
+
+        for label_text, time_key in [("上班时间:", "start_time"), ("下班时间:", "end_time")]:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label_text))
+
+            hour = QComboBox()
+            hour.addItems([f"{h:02d}" for h in range(24)])
+            hour.setCurrentText(config[time_key].split(':')[0])
+
+            minute = QComboBox()
+            minute.addItems([f"{m:02d}" for m in range(0, 60, 5)])
+            minute.setCurrentText(config[time_key].split(':')[1])
+
+            row.addWidget(hour)
+            row.addWidget(QLabel(":"))
+            row.addWidget(minute)
+            layout.addLayout(row)
+
+            setattr(self, f"{time_key.split('_')[0]}_hour", hour)
+            setattr(self, f"{time_key.split('_')[0]}_minute", minute)
+
+        btn_layout = QHBoxLayout()
+        save_btn = QPushButton("保存")
+        save_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        self.setLayout(layout)
+
+    def get_times(self):
+        return (
+            f"{self.start_hour.currentText()}:{self.start_minute.currentText()}",
+            f"{self.end_hour.currentText()}:{self.end_minute.currentText()}"
+        )
 
 
 class WorkTimeProgress:
     def __init__(self):
-        # 获取exe所在目录（用于配置文件）
-        if getattr(sys, 'frozen', False):
-            # 打包后的exe
-            self.app_dir = os.path.dirname(sys.executable)
-            # 获取资源文件目录（PyInstaller临时目录）
-            self.resource_dir = sys._MEIPASS
-        else:
-            # 开发环境
-            self.app_dir = os.path.dirname(os.path.abspath(__file__))
-            # 资源文件在项目根目录（上一级目录）
-            self.resource_dir = os.path.dirname(self.app_dir)
-
+        self.app_dir = os.path.dirname(sys.executable if getattr(sys, 'frozen', False)
+                                       else os.path.abspath(__file__))
+        self.resource_dir = getattr(sys, '_MEIPASS', os.path.dirname(self.app_dir))
         self.config_file = os.path.join(self.app_dir, "config.json")
-        self.load_config()
 
-        # 创建主窗口（进度条窗口）
-        self.root = tk.Tk()
-        self.root.title("工作进度")
-        self.root.attributes('-topmost', True)  # 窗口置顶
-        self.root.attributes('-disabled', True)  # 禁用窗口交互
+        self.config = self._load_config()
+        self.app = QApplication(sys.argv)
 
-        # 设置任务栏图标
-        self.set_taskbar_icon()
-
-        # 设置窗口位置和大小（屏幕顶部）
-        screen_width = self.root.winfo_screenwidth()
-        window_height = 2
-        self.root.geometry(f"{screen_width}x{window_height}+0+0")
-
-        # 移除窗口边框
-        self.root.overrideredirect(True)
-
-        # 禁用窗口焦点
-        self.root.attributes('-alpha', 0.99)  # 稍微透明以避免焦点
-
-        # 创建Canvas作为进度条（支持渐变色）
-        self.canvas = tk.Canvas(
-            self.root,
-            height=2,
-            highlightthickness=0,
-            bg='white'
+        self.progress_bar = ProgressBar()
+        self.progress_bar.set_colors(
+            self.config['progress_color_start'],
+            self.config['progress_color_end']
         )
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+        self.progress_bar.show()
 
-        # 进度值
-        self.progress_value = 0
-
-        # 禁用Canvas的所有事件
-        self.canvas.bind('<Button-1>', lambda e: 'break')
-        self.canvas.bind('<Button-2>', lambda e: 'break')
-        self.canvas.bind('<Button-3>', lambda e: 'break')
-        self.canvas.bind('<Motion>', lambda e: 'break')
-
-        # 关机标志
         self.shutdown_enabled = True
         self.shutdown_cancelled = False
         self.shutdown_dialog_shown = False
+        self.shimmer_offset = 0
 
-        # 系统托盘图标
-        self.tray_icon = None
+        self._create_tray_icon()
 
-        # 立即创建系统托盘图标
-        if TRAY_AVAILABLE:
-            self.create_tray_icon()
-        else:
-            print("警告: 系统托盘功能不可用，请安装 pystray 和 Pillow 库")
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self._update_progress)
+        self.update_timer.start(1000)
 
-        # 启动更新线程
-        self.running = True
-        self.update_thread = threading.Thread(target=self.update_progress, daemon=True)
-        self.update_thread.start()
+        self.shimmer_timer = QTimer()
+        self.shimmer_timer.timeout.connect(self._animate_shimmer)
 
-        # 窗口关闭事件
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-    def load_config(self):
-        """加载配置文件"""
-        default_config = {
+    def _load_config(self):
+        default = {
             "start_time": "09:00",
             "end_time": "18:00",
             "progress_color_start": "#0078D4",
-            "progress_color_end": "#00D4AA"
+            "progress_color_end": "#0d3b0a"
         }
 
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
-                    self.config = json.load(f)
-                # 确保有颜色配置
-                if 'progress_color_start' not in self.config:
-                    self.config['progress_color_start'] = default_config['progress_color_start']
-                if 'progress_color_end' not in self.config:
-                    self.config['progress_color_end'] = default_config['progress_color_end']
-                # 兼容旧版本单色配置
-                if 'progress_color' in self.config and 'progress_color_start' not in self.config:
-                    self.config['progress_color_start'] = self.config['progress_color']
-                    self.config['progress_color_end'] = self.config['progress_color']
+                    config = {**default, **json.load(f)}
+                    return config
             except:
-                self.config = default_config
-        else:
-            self.config = default_config
-            self.save_config()
+                pass
 
-    def save_config(self):
-        """保存配置文件"""
+        self._save_config(default)
+        return default
+
+    def _save_config(self, config=None):
         with open(self.config_file, 'w', encoding='utf-8') as f:
-            json.dump(self.config, f, indent=4, ensure_ascii=False)
+            json.dump(config or self.config, f, indent=4, ensure_ascii=False)
 
-    def hex_to_rgb(self, hex_color):
-        """将十六进制颜色转换为RGB元组"""
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    def _create_tray_icon(self):
+        icon_path = os.path.join(self.resource_dir, 'icon.ico')
+        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon(
+            QPixmap(64, 64).copy().scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio)
+        )
 
-    def rgb_to_hex(self, rgb):
-        """将RGB元组转换为十六进制颜色"""
-        return '#{:02x}{:02x}{:02x}'.format(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self.tray_icon = QSystemTrayIcon(icon, self.app)
+        menu = QMenu()
 
-    def interpolate_color(self, color1, color2, factor):
-        """在两个颜色之间插值"""
-        rgb1 = self.hex_to_rgb(color1)
-        rgb2 = self.hex_to_rgb(color2)
+        menu.addAction("显示进度条", self.progress_bar.show)
+        menu.addAction("隐藏进度条", self.progress_bar.hide)
+        menu.addSeparator()
+        menu.addAction("设置时间", self._show_settings)
 
-        r = rgb1[0] + (rgb2[0] - rgb1[0]) * factor
-        g = rgb1[1] + (rgb2[1] - rgb1[1]) * factor
-        b = rgb1[2] + (rgb2[2] - rgb1[2]) * factor
+        color_menu = menu.addMenu("选择颜色")
+        color_menu.addAction("起始颜色", lambda: self._choose_color('start'))
+        color_menu.addAction("结束颜色", lambda: self._choose_color('end'))
 
-        return self.rgb_to_hex((r, g, b))
+        menu.addSeparator()
+        self.shutdown_action = menu.addAction(
+            "取消关机" if self.shutdown_enabled else "启用关机",
+            self._toggle_shutdown
+        )
+        menu.addSeparator()
+        menu.addAction("退出", self._quit)
 
-    def draw_gradient_progress(self):
-        """绘制渐变色进度条"""
-        # 清除Canvas
-        self.canvas.delete('all')
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.show()
 
-        # 获取Canvas尺寸
-        width = self.canvas.winfo_width()
-        height = self.canvas.winfo_height()
+    def _update_progress(self):
+        now = datetime.now().time()
+        start = datetime.strptime(self.config['start_time'], '%H:%M').time()
+        end = datetime.strptime(self.config['end_time'], '%H:%M').time()
 
-        if width <= 1:  # Canvas还未完全初始化
-            width = self.root.winfo_screenwidth()
+        to_seconds = lambda t: t.hour * 3600 + t.minute * 60 + (t.second if hasattr(t, 'second') else 0)
+        current_sec, start_sec, end_sec = to_seconds(now), to_seconds(start), to_seconds(end)
 
-        # 计算进度条宽度
-        progress_width = int(width * self.progress_value / 100)
+        if current_sec < start_sec:
+            progress = 0
+            self.shutdown_cancelled = self.shutdown_dialog_shown = False
+        elif current_sec >= end_sec:
+            progress = 100
+            if self.shutdown_enabled and not self.shutdown_cancelled and not self.shutdown_dialog_shown:
+                self._shutdown_computer()
+        else:
+            progress = (current_sec - start_sec) / (end_sec - start_sec) * 100
 
-        if progress_width > 0:
-            # 获取渐变色配置
-            color_start = self.config.get('progress_color_start', '#0078D4')
-            color_end = self.config.get('progress_color_end', '#00D4AA')
+        old_progress = self.progress_bar.progress_value
+        self.progress_bar.set_progress(progress)
 
-            # 根据当前进度计算目标颜色（从起始颜色到当前进度对应的颜色）
-            current_progress_factor = self.progress_value / 100
-            current_end_color = self.interpolate_color(color_start, color_end, current_progress_factor)
+        if progress > 0 and old_progress == 0:
+            self.shimmer_timer.start(30)
+        elif progress == 0 and old_progress > 0:
+            self.shimmer_timer.stop()
+            self.shimmer_offset = 0
 
-            # 绘制渐变色
-            # 将进度条分成多个小段，每段颜色略有不同
-            segments = min(progress_width, 100)  # 最多100个渐变段
-            segment_width = progress_width / segments
+    def _animate_shimmer(self):
+        self.shimmer_offset += 12
+        self.progress_bar.update_shimmer(self.shimmer_offset)
 
-            for i in range(segments):
-                # 在进度条范围内从起始颜色渐变到当前进度对应的颜色
-                factor = i / max(segments - 1, 1)
-                color = self.interpolate_color(color_start, current_end_color, factor)
-                x1 = i * segment_width
-                x2 = (i + 1) * segment_width
-                self.canvas.create_rectangle(
-                    x1, 0, x2, height,
-                    fill=color,
-                    outline=color
-                )
+    def _show_settings(self):
+        dialog = SettingsDialog(self.config)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.config['start_time'], self.config['end_time'] = dialog.get_times()
+            self._save_config()
 
-    def set_taskbar_icon(self):
-        """设置任务栏图标"""
-        try:
-            # 尝试加载icon.ico文件（从资源目录）
-            icon_path = os.path.join(self.resource_dir, 'icon.ico')
-            if os.path.exists(icon_path):
-                icon_image = Image.open(icon_path)
-                # 转换为PhotoImage
-                icon_photo = tk.PhotoImage(data=self._image_to_png_data(icon_image))
-                self.root.iconphoto(True, icon_photo)
-            else:
-                # 如果icon.ico不存在，创建一个简单的图标
-                icon_image = Image.new('RGB', (64, 64), 'white')
-                dc = ImageDraw.Draw(icon_image)
-                # 绘制一个蓝色进度条样式的图标
-                dc.rectangle([0, 0, 64, 64], fill='#0078D4')
-                dc.rectangle([5, 25, 59, 39], fill='white')
-                dc.rectangle([5, 25, 35, 39], fill='#00CC00')
+    def _choose_color(self, color_type):
+        key = f'progress_color_{"start" if color_type == "start" else "end"}'
+        color = QColorDialog.getColor(
+            QColor(self.config[key]),
+            self.progress_bar,
+            f"选择进度条{'起始' if color_type == 'start' else '结束'}颜色"
+        )
+        if color.isValid():
+            self.config[key] = color.name()
+            self._save_config()
+            self.progress_bar.set_colors(
+                self.config['progress_color_start'],
+                self.config['progress_color_end']
+            )
 
-                # 转换为PhotoImage
-                icon_photo = tk.PhotoImage(data=self._image_to_png_data(icon_image))
-                self.root.iconphoto(True, icon_photo)
-        except Exception as e:
-            print(f"设置任务栏图标失败: {e}")
-
-    def _image_to_png_data(self, image):
-        """将PIL Image转换为PNG数据"""
-        import io
-        import base64
-        buffer = io.BytesIO()
-        image.save(buffer, format='PNG')
-        png_data = base64.b64encode(buffer.getvalue()).decode()
-        return png_data
-
-    def update_progress(self):
-        """更新进度条"""
-        while self.running:
-            try:
-                now = datetime.now()
-                current_time = now.time()
-
-                # 解析配置的时间
-                start_time = datetime.strptime(self.config['start_time'], '%H:%M').time()
-                end_time = datetime.strptime(self.config['end_time'], '%H:%M').time()
-
-                # 计算进度
-                start_seconds = start_time.hour * 3600 + start_time.minute * 60
-                end_seconds = end_time.hour * 3600 + end_time.minute * 60
-                current_seconds = current_time.hour * 3600 + current_time.minute * 60 + current_time.second
-
-                if current_seconds < start_seconds:
-                    # 还没到上班时间
-                    progress = 0
-                    status = "未开始"
-                    # 重置关机取消标志，为新的一天做准备
-                    if self.shutdown_cancelled:
-                        self.shutdown_cancelled = False
-                    if self.shutdown_dialog_shown:
-                        self.shutdown_dialog_shown = False
-                elif current_seconds >= end_seconds:
-                    # 已经到下班时间
-                    progress = 100
-                    status = "已完成"
-
-                    # 检查是否需要关机
-                    if self.shutdown_enabled and not self.shutdown_cancelled and not self.shutdown_dialog_shown:
-                        self.shutdown_computer()
-                else:
-                    # 工作中
-                    total_seconds = end_seconds - start_seconds
-                    elapsed_seconds = current_seconds - start_seconds
-                    progress = (elapsed_seconds / total_seconds) * 100
-                    status = "进行中"
-
-                # 更新UI
-                self.root.after(0, self.update_ui, progress)
-
-            except Exception as e:
-                print(f"更新进度时出错: {e}")
-
-            # 每秒更新一次
-            threading.Event().wait(1)
-
-    def update_ui(self, progress):
-        """更新UI显示"""
-        self.progress_value = progress
-        self.draw_gradient_progress()
-
-    def show_context_menu(self, event):
-        """显示右键菜单"""
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="设置时间", command=self.show_settings)
-        menu.add_command(label="取消关机" if self.shutdown_enabled else "启用关机",
-                        command=self.toggle_shutdown)
-        menu.add_separator()
-        menu.add_command(label="最小化到托盘", command=self.minimize_to_tray)
-        menu.add_command(label="退出", command=self.quit_app)
-
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
-
-    def show_settings(self):
-        """显示设置窗口"""
-        settings_window = tk.Toplevel(self.root)
-        settings_window.title("时间设置")
-        settings_window.attributes('-topmost', True)
-
-        # 设置窗口大小
-        window_width = 350
-        window_height = 180
-
-        # 获取屏幕尺寸
-        screen_width = settings_window.winfo_screenwidth()
-        screen_height = settings_window.winfo_screenheight()
-
-        # 计算居中位置
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-
-        settings_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-        # 生成小时和分钟选项
-        hours = [f"{h:02d}" for h in range(24)]
-        minutes = [f"{m:02d}" for m in range(0, 60, 5)]  # 每5分钟一个选项
-
-        # 解析当前配置的时间
-        start_time_parts = self.config['start_time'].split(':')
-        end_time_parts = self.config['end_time'].split(':')
-
-        # 上班时间
-        tk.Label(settings_window, text="上班时间:").grid(row=0, column=0, padx=10, pady=15, sticky='e')
-
-        start_frame = tk.Frame(settings_window)
-        start_frame.grid(row=0, column=1, padx=10, pady=15, sticky='w')
-
-        start_hour = ttk.Combobox(start_frame, values=hours, width=5, state='readonly')
-        start_hour.set(start_time_parts[0])
-        start_hour.pack(side=tk.LEFT)
-
-        tk.Label(start_frame, text=":").pack(side=tk.LEFT, padx=2)
-
-        start_minute = ttk.Combobox(start_frame, values=minutes, width=5, state='readonly')
-        start_minute.set(start_time_parts[1])
-        start_minute.pack(side=tk.LEFT)
-
-        # 下班时间
-        tk.Label(settings_window, text="下班时间:").grid(row=1, column=0, padx=10, pady=15, sticky='e')
-
-        end_frame = tk.Frame(settings_window)
-        end_frame.grid(row=1, column=1, padx=10, pady=15, sticky='w')
-
-        end_hour = ttk.Combobox(end_frame, values=hours, width=5, state='readonly')
-        end_hour.set(end_time_parts[0])
-        end_hour.pack(side=tk.LEFT)
-
-        tk.Label(end_frame, text=":").pack(side=tk.LEFT, padx=2)
-
-        end_minute = ttk.Combobox(end_frame, values=minutes, width=5, state='readonly')
-        end_minute.set(end_time_parts[1])
-        end_minute.pack(side=tk.LEFT)
-
-        def save_settings():
-            # 组合时间
-            start_time = f"{start_hour.get()}:{start_minute.get()}"
-            end_time = f"{end_hour.get()}:{end_minute.get()}"
-
-            self.config['start_time'] = start_time
-            self.config['end_time'] = end_time
-            self.save_config()
-
-            messagebox.showinfo("成功", "设置已保存！")
-            settings_window.destroy()
-
-        def cancel_settings():
-            settings_window.destroy()
-
-        # 按钮框架
-        button_frame = tk.Frame(settings_window)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=15)
-
-        # 让按钮框架在父容器中居中
-        settings_window.grid_columnconfigure(0, weight=1)
-        settings_window.grid_columnconfigure(1, weight=1)
-
-        # 保存和取消按钮
-        tk.Button(button_frame, text="保存", command=save_settings, width=10).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="取消", command=cancel_settings, width=10).pack(side=tk.LEFT, padx=5)
-
-    def toggle_shutdown(self):
-        """切换关机功能"""
+    def _toggle_shutdown(self):
         self.shutdown_enabled = not self.shutdown_enabled
         self.shutdown_cancelled = not self.shutdown_enabled
-        status = "已启用" if self.shutdown_enabled else "已取消"
-        messagebox.showinfo("关机设置", f"自动关机功能{status}")
+        self.shutdown_action.setText("取消关机" if self.shutdown_enabled else "启用关机")
 
-    def shutdown_computer(self):
-        """关闭计算机"""
-        # 标记对话框已显示
+    def _shutdown_computer(self):
         self.shutdown_dialog_shown = True
+        reply = QMessageBox.question(
+            self.progress_bar,
+            "关机确认",
+            "工作时间已结束，是否立即关机？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
 
-        if messagebox.askyesno("关机确认", "工作时间已结束，是否立即关机？"):
-            if sys.platform == 'win32':
-                os.system('shutdown /s /t 10')
-            elif sys.platform == 'darwin':
-                os.system('sudo shutdown -h +1')
-            else:
-                os.system('shutdown -h +1')
+        if reply == QMessageBox.StandardButton.Yes:
+            os.system('shutdown /s /t 10' if sys.platform == 'win32' else 'shutdown -h +1')
         else:
             self.shutdown_cancelled = True
             self.shutdown_dialog_shown = False
 
-    def create_tray_icon(self):
-        """创建系统托盘图标"""
-        if not TRAY_AVAILABLE:
-            return
-
-        # 创建托盘图标图像
-        image = self.create_tray_icon_image()
-
-        # 创建托盘菜单
-        color_menu = pystray.Menu(
-            pystray.MenuItem("起始颜色", self.choose_start_color),
-            pystray.MenuItem("结束颜色", self.choose_end_color)
-        )
-
-        menu = pystray.Menu(
-            pystray.MenuItem("显示进度条", self.show_window),
-            pystray.MenuItem("隐藏进度条", self.hide_window),
-            pystray.MenuItem("设置时间", self.show_settings),
-            pystray.MenuItem("选择颜色", color_menu),
-            pystray.MenuItem("取消关机" if self.shutdown_enabled else "启用关机",
-                           self.toggle_shutdown_from_tray),
-            pystray.MenuItem("退出", self.quit_app)
-        )
-
-        self.tray_icon = pystray.Icon("work_time", image, "工作进度", menu)
-        # 在后台线程中运行托盘图标
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
-
-    def create_tray_icon_image(self):
-        """创建托盘图标图像"""
-        # 尝试加载icon.ico文件（从资源目录）
-        icon_path = os.path.join(self.resource_dir, 'icon.ico')
-        if os.path.exists(icon_path):
-            try:
-                return Image.open(icon_path)
-            except Exception as e:
-                print(f"加载icon.ico失败: {e}")
-
-        # 如果icon.ico不存在或加载失败，创建默认图标
-        width = 64
-        height = 64
-        image = Image.new('RGB', (width, height), 'white')
-        dc = ImageDraw.Draw(image)
-        dc.rectangle([0, 0, width, height], fill='#0078D4')
-        dc.rectangle([10, 10, width-10, height-10], fill='white')
-        dc.rectangle([10, 25, width-10, 39], fill='#00CC00')
-        return image
-
-    def hide_window(self, icon=None, item=None):
-        """隐藏进度条窗口"""
-        self.root.withdraw()
-
-    def show_window(self, icon=None, item=None):
-        """显示进度条窗口"""
-        self.root.deiconify()
-        self.root.attributes('-topmost', True)
-
-    def toggle_shutdown_from_tray(self, icon=None, item=None):
-        """从托盘切换关机功能"""
-        self.toggle_shutdown()
-        # 重新创建菜单以更新文本
-        self.update_tray_menu()
-
-    def update_tray_menu(self):
-        """更新托盘菜单"""
-        if self.tray_icon:
-            color_menu = pystray.Menu(
-                pystray.MenuItem("起始颜色", self.choose_start_color),
-                pystray.MenuItem("结束颜色", self.choose_end_color)
-            )
-
-            menu = pystray.Menu(
-                pystray.MenuItem("显示进度条", self.show_window),
-                pystray.MenuItem("隐藏进度条", self.hide_window),
-                pystray.MenuItem("设置时间", self.show_settings),
-                pystray.MenuItem("选择颜色", color_menu),
-                pystray.MenuItem("取消关机" if self.shutdown_enabled else "启用关机",
-                               self.toggle_shutdown_from_tray),
-                pystray.MenuItem("退出", self.quit_app)
-            )
-            self.tray_icon.menu = menu
-
-    def choose_start_color(self, icon=None, item=None):
-        """选择进度条起始颜色"""
-        current_color = self.config.get('progress_color_start', '#0078D4')
-
-        # 创建一个临时窗口用于居中颜色选择器
-        temp_window = tk.Toplevel(self.root)
-        temp_window.withdraw()  # 隐藏临时窗口
-
-        # 将临时窗口移到屏幕中央
-        screen_width = temp_window.winfo_screenwidth()
-        screen_height = temp_window.winfo_screenheight()
-        x = (screen_width - 400) // 2
-        y = (screen_height - 300) // 2
-        temp_window.geometry(f"+{x}+{y}")
-
-        color = colorchooser.askcolor(
-            color=current_color,
-            title="选择进度条起始颜色",
-            parent=temp_window
-        )
-
-        temp_window.destroy()
-
-        if color and color[1]:
-            self.config['progress_color_start'] = color[1]
-            self.save_config()
-            self.draw_gradient_progress()
-            messagebox.showinfo("成功", f"起始颜色已更新为: {color[1]}")
-
-    def choose_end_color(self, icon=None, item=None):
-        """选择进度条结束颜色"""
-        current_color = self.config.get('progress_color_end', '#00D4AA')
-
-        # 创建一个临时窗口用于居中颜色选择器
-        temp_window = tk.Toplevel(self.root)
-        temp_window.withdraw()  # 隐藏临时窗口
-
-        # 将临时窗口移到屏幕中央
-        screen_width = temp_window.winfo_screenwidth()
-        screen_height = temp_window.winfo_screenheight()
-        x = (screen_width - 400) // 2
-        y = (screen_height - 300) // 2
-        temp_window.geometry(f"+{x}+{y}")
-
-        color = colorchooser.askcolor(
-            color=current_color,
-            title="选择进度条结束颜色",
-            parent=temp_window
-        )
-
-        temp_window.destroy()
-
-        if color and color[1]:
-            self.config['progress_color_end'] = color[1]
-            self.save_config()
-            self.draw_gradient_progress()
-            messagebox.showinfo("成功", f"结束颜色已更新为: {color[1]}")
-
-    def on_closing(self):
-        """窗口关闭事件"""
-        # 不做任何事，防止意外关闭
-        pass
-
-    def quit_app(self, icon=None, item=None):
-        """退出程序"""
-        self.running = False
-        if self.tray_icon:
-            self.tray_icon.stop()
-        self.root.quit()
-        self.root.destroy()
+    def _quit(self):
+        self.update_timer.stop()
+        self.shimmer_timer.stop()
+        self.tray_icon.hide()
+        self.app.quit()
 
     def run(self):
-        """运行程序"""
-        self.root.mainloop()
+        sys.exit(self.app.exec())
 
 
 if __name__ == "__main__":
-    app = WorkTimeProgress()
-    app.run()
+    WorkTimeProgress().run()

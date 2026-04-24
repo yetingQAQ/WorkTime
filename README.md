@@ -13,7 +13,7 @@
 - ✅ 在屏幕最顶部显示渐变色进度条
 - ✅ 根据上班时间和下班时间自动计算工作进度
 - ✅ 到达下班时间时自动提示关机
-- ✅ 可自定义进度条渐变色
+- ✅ 可自定义进度条渐变色（起始色和结束色）
 - ✅ 支持最小化到系统托盘
 - ✅ 可随时取消或启用自动关机
 
@@ -38,8 +38,7 @@ uv run python src/work_time_progress.py
 python build.py
 
 # 或手动打包
-uv sync
-uv pip install pyinstaller
+uv sync --extra build
 uv run pyinstaller build.spec
 ```
 
@@ -49,18 +48,17 @@ uv run pyinstaller build.spec
 
 ### 使用 uv（推荐）
 ```bash
+# 安装运行依赖
 uv sync
-```
 
-### 使用 pip
-```bash
-pip install -r requirements.txt
+# 安装打包依赖
+uv sync --extra build
 ```
 
 ### 依赖说明
-- **pystray**: 系统托盘支持
-- **Pillow**: 图像处理（用于托盘图标）
-- **tkinter**: GUI界面（Python标准库）
+- **PyQt6**: GUI框架
+- **pyinstaller**: 打包工具（仅打包时需要）
+- **Pillow**: 图像处理（仅打包时需要）
 
 ## 使用方法
 
@@ -80,7 +78,7 @@ uv run python src/work_time_progress.py
 - 上班时间：09:00
 - 下班时间：18:00
 - 进度条起始颜色：#0078D4（蓝色）
-- 进度条结束颜色：#00D4AA（青色）
+- 进度条结束颜色：#0d3b0a（深绿色）
 
 ### 3. 设置时间
 
@@ -89,7 +87,7 @@ uv run python src/work_time_progress.py
 ### 4. 功能说明
 
 #### 进度条显示
-- 屏幕顶部2像素高的渐变色进度条
+- 屏幕顶部渐变色进度条
 - 实时显示当前工作进度
 - 窗口置顶，不影响其他操作
 
@@ -98,7 +96,7 @@ uv run python src/work_time_progress.py
 - **设置时间**：修改上班和下班时间
 - **选择颜色**：自定义进度条渐变色
   - 起始颜色：进度条左侧颜色
-  - 结束颜色：进度条右侧颜色
+  - 结束颜色：进度条右侧颜色（根据进度动态计算）
 - **取消关机/启用关机**：切换自动关机功能
 - **退出**：关闭程序
 
@@ -118,7 +116,7 @@ uv run python src/work_time_progress.py
     "start_time": "09:00",
     "end_time": "18:00",
     "progress_color_start": "#0078D4",
-    "progress_color_end": "#00D4AA"
+    "progress_color_end": "#0d3b0a"
 }
 ```
 
@@ -137,15 +135,18 @@ uv run python src/work_time_progress.py
 python build.py
 ```
 
+脚本会自动：
+1. 检查uv环境
+2. 同步项目依赖（包括打包依赖）
+3. 清理旧的构建文件
+4. 使用PyInstaller打包
+
 #### 方法2：手动打包
 ```bash
-# 1. 同步依赖
-uv sync
+# 1. 同步依赖（包括打包依赖）
+uv sync --extra build
 
-# 2. 安装PyInstaller
-uv pip install pyinstaller
-
-# 3. 打包
+# 2. 打包
 uv run pyinstaller build.spec
 ```
 
@@ -154,16 +155,24 @@ uv run pyinstaller build.spec
 `build.spec` 文件包含完整的打包配置：
 - 单文件exe输出
 - 无控制台窗口
-- 包含所有必要的依赖模块
+- 包含所有必要的依赖模块（PyQt6）
+- 包含图标文件
 
 ### 打包后的文件
 
 ```
 dist/
-└── 工作时间进度.exe    # 可执行文件（约15-20MB）
+└── 工作时间进度.exe    # 可执行文件（约30-40MB）
 ```
 
 首次运行时会在exe同目录下自动创建 `config.json` 配置文件。
+
+## 技术栈
+
+- **GUI框架**: PyQt6
+- **包管理**: uv
+- **打包工具**: PyInstaller
+- **Windows API**: ctypes (用于移除窗口圆角)
 
 ## 系统要求
 
@@ -173,37 +182,23 @@ dist/
 - Windows / macOS / Linux
 
 ### 打包后的exe
-- Windows 7 及以上
+- Windows 10/11
 - 不需要安装Python
 - 不需要额外的依赖库
 
-## 常见问题
+## 项目结构
 
-### 开发相关
-
-**Q: 如何安装 uv？**
-```bash
-pip install uv
 ```
-
-**Q: 系统托盘图标不显示？**
-- 确保已安装 pystray 和 Pillow：`uv sync`
-- 检查系统托盘设置是否允许显示图标
-
-### 打包相关
-
-**Q: 打包后运行报错？**
-- 确保使用 `build.spec` 文件打包
-- 检查是否有杀毒软件拦截
-- 尝试以管理员权限运行
-
-**Q: 配置文件保存失败？**
-- 确保exe有写入权限
-- 不要放在需要管理员权限的目录（如 C:\Program Files）
-
-**Q: 关机命令无效？**
-- Windows：确保有管理员权限
-- Linux/macOS：可能需要sudo权限，建议手动关机
+WorkTime/
+├── src/
+│   └── work_time_progress.py  # 主程序
+├── icon.ico                    # 应用图标
+├── build.py                    # 打包脚本
+├── build.spec                  # PyInstaller配置
+├── pyproject.toml              # 项目配置和依赖
+├── uv.lock                     # 依赖锁定文件
+└── README.md                   # 项目说明
+```
 
 ## 分发
 
