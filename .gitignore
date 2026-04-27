@@ -7,8 +7,9 @@ __pycache__/
 
 # Build
 build/
+build_aggressive/
 dist/
-*.spec
+dist_aggressive/
 *.egg-info
 wheels/
 
@@ -17,7 +18,7 @@ wheels/
 venv/
 ENV/
 
-# Config
+# Config (runtime generated)
 config.json
 
 # IDE
@@ -32,5 +33,3 @@ Thumbs.db
 
 # Claude
 .claude/
-
-src/config.json
