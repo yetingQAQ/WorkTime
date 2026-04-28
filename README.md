@@ -44,21 +44,6 @@ python build.py --mode aggressive
 打包完成后，默认可执行文件位于 `dist\工作时间进度.exe`
 使用 `--mode aggressive` 时，输出位于 `dist_aggressive\*.exe`。
 
-## 安装依赖
-
-### 使用 uv（推荐）
-```bash
-# 安装运行依赖
-uv sync
-
-# 安装打包依赖
-uv sync --extra build
-```
-
-### 依赖说明
-- **PyQt6**: GUI框架
-- **pyinstaller**: 打包工具（仅打包时需要）
-
 ## 配置文件
 
 程序会在exe同目录生成 `config.json` 配置文件：
