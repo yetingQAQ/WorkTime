@@ -12,6 +12,7 @@ class Config:
     end_time: str = "18:00"
     progress_color_start: str = "#0078D4"
     progress_color_end: str = "#0d3b0a"
+    shimmer_speed: float = 1.0
 
     @staticmethod
     def load(path: Path) -> Config:

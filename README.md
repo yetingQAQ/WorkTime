@@ -14,6 +14,7 @@
 - ✅ 根据上班时间和下班时间自动计算工作进度
 - ✅ 到达下班时间时自动提示关机
 - ✅ 可自定义进度条渐变色（起始色和结束色）
+- ✅ 可调节脉冲流光速度（慢 / 正常 / 快 / 极快）
 - ✅ 支持最小化到系统托盘
 - ✅ 可随时取消或启用自动关机
 
@@ -53,7 +54,8 @@ python build.py --mode aggressive
     "start_time": "09:00",
     "end_time": "18:00",
     "progress_color_start": "#0078D4",
-    "progress_color_end": "#0d3b0a"
+    "progress_color_end": "#0d3b0a",
+    "shimmer_speed": 1.0
 }
 ```
 

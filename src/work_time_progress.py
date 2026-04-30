@@ -66,6 +66,14 @@ class WorkTimeProgress:
         color_menu.addAction("起始颜色", lambda: self._choose_color("start"))
         color_menu.addAction("结束颜色", lambda: self._choose_color("end"))
 
+        speed_menu = menu.addMenu("脉冲速度")
+        self._speed_actions = {}
+        for label, value in [("慢", 0.5), ("正常", 1.0), ("快", 1.5), ("极快", 2.0)]:
+            action = speed_menu.addAction(label, lambda v=value: self._set_shimmer_speed(v))
+            action.setCheckable(True)
+            action.setChecked(abs(self.config.shimmer_speed - value) < 1e-6)
+            self._speed_actions[value] = action
+
         menu.addSeparator()
         self._shutdown_action = menu.addAction(
             "取消关机" if self.shutdown_enabled else "启用关机",
@@ -110,7 +118,7 @@ class WorkTimeProgress:
             self.shimmer_offset = 0
 
     def _animate_shimmer(self) -> None:
-        self.shimmer_offset += 12
+        self.shimmer_offset += 12 * self.config.shimmer_speed
         self.progress_bar.update_shimmer(self.shimmer_offset)
 
     def _show_settings(self) -> None:
@@ -127,6 +135,12 @@ class WorkTimeProgress:
             setattr(self.config, attr, color.name())
             self.config.save(self._config_path)
             self.progress_bar.set_colors(self.config.progress_color_start, self.config.progress_color_end)
+
+    def _set_shimmer_speed(self, speed: float) -> None:
+        self.config.shimmer_speed = speed
+        self.config.save(self._config_path)
+        for value, action in self._speed_actions.items():
+            action.setChecked(abs(value - speed) < 1e-6)
 
     def _toggle_shutdown(self) -> None:
         self.shutdown_enabled = not self.shutdown_enabled
