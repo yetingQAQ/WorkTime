@@ -161,7 +161,11 @@ def main() -> int:
     print("\n" + "=" * 58)
     if exe and exe.exists():
         print("Build succeeded")
-        print(f"Output : {exe.resolve()}")
+        # Use UTF-8 encoding for output to handle Chinese characters
+        try:
+            print(f"Output : {exe.resolve()}")
+        except UnicodeEncodeError:
+            print(f"Output : {exe.name} (in {distpath.resolve()})")
         print(f"Size   : {format_size(exe.stat().st_size)}")
     else:
         print("Build finished but executable was not found in dist path.")
