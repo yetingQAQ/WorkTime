@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[oc]
+*.py[cod]
+*$py.class
+*.so
+
+# Build
+build/
+build_aggressive/
+dist/
+dist_aggressive/
+*.egg-info
+wheels/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Config (runtime generated)
+config.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
